@@ -61,7 +61,9 @@ args = getResolvedOptions(sys.argv, [
     'glueVerificationJob',
     'glueProfilerJob',
     'glueDatabase',
-    'glueTables'])
+    'glueTables',
+    'pushDownPredicate'
+])
 
 env = args['env']
 table_suffix = get_table_suffix(env)
@@ -72,10 +74,15 @@ verification_job_name = args['glueVerificationJob']
 profile_job_name = args['glueProfilerJob']
 glue_database = args['glueDatabase']
 glue_tables = [x.strip() for x in args['glueTables'].split(',')]
+pushDownPredicate = args['pushDownPredicate']
+pradicate = [x.strip() for x in args['pushDownPredicate'].split(',')]
 
+mapTablePredicate = dict(zip(glue_tables,pradicate))
+#print(mapTablePredicate)
 # Determine which tables had Deequ data quality suggestions set up already
 suggestions_tables = []
 verification_tables = []
+pradicate_tables=[]
 suggestions_dynamo = dynamodb.Table(suggestion_dynamodb_table_name)
 for table in glue_tables:
     suggestions_item = get_suggestions(
@@ -84,8 +91,13 @@ for table in glue_tables:
         verification_tables.append(table)
     else:
         suggestions_tables.append(table)
+        pradicate_tables.append(mapTablePredicate.get(table))
+        #print(pradicate_tables)
 
 logger.info('Calling Glue Jobs')
+logger.info('Job 1 :suggestions_job_name')
+
+#data-quality-suggestion-analysis-verification-runner
 if suggestions_tables:
     suggestions_response = glue.start_job_run(
         JobName=suggestions_job_name,
@@ -93,9 +105,15 @@ if suggestions_tables:
             '--dynamodbSuggestionTableName': suggestion_dynamodb_table_name,
             '--dynamodbAnalysisTableName': analysis_dynamodb_table_name,
             '--glueDatabase': glue_database,
-            '--glueTables': ','.join(suggestions_tables)
+            '--glueTables': ','.join(suggestions_tables),
+            '--pushDownPredicate': pushDownPredicate,
+            '--mapTablePredicate': ','.join(pradicate_tables) 
+
         }
     )
+
+logger.info('Job 2 :verification_job_name')
+#data-quality-analysis-verification-runner
 if verification_tables:
     verification_response = glue.start_job_run(
         JobName=verification_job_name,
@@ -103,17 +121,24 @@ if verification_tables:
             '--dynamodbSuggestionTableName': suggestion_dynamodb_table_name,
             '--dynamodbAnalysisTableName': analysis_dynamodb_table_name,
             '--glueDatabase': glue_database,
-            '--glueTables': ','.join(verification_tables)
+            '--glueTables': ','.join(verification_tables),
+            '--pushDownPredicate': pushDownPredicate
+
         }
     )
 
+logger.info('Job 3 :profile_job_name')
+#data-quality-profile-runner
 profile_response = glue.start_job_run(
     JobName=profile_job_name,
     Arguments={
         '--glueDatabase': glue_database,
-        '--glueTables': ','.join(glue_tables)
+        '--glueTables': ','.join(glue_tables),
+        '--pushDownPredicate': pushDownPredicate
+
     }
 )
+logger.info('profile_job_name:pushDownPredicate='+pushDownPredicate)
 
 # Wait for execution to complete, timeout in 60*30=1800 secs
 logger.info('Waiting for execution')
