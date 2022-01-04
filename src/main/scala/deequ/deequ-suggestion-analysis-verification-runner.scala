@@ -53,18 +53,24 @@ import java.util.Properties
 import java.util.UUID.randomUUID
 
 object GlueApp {
+    
   def main(sysArgs: Array[String]) {
     val sparkContext: SparkContext = new SparkContext()
     val glueContext: GlueContext = new GlueContext(sparkContext)
     val sqlContext = new SQLContext(sparkContext)
     val spark = glueContext.getSparkSession
-    val args = GlueArgParser.getResolvedOptions(sysArgs, Seq("JOB_NAME", "dynamodbSuggestionTableName", "dynamodbAnalysisTableName", "glueDatabase", "glueTables", "targetBucketName").toArray)
+    val args = GlueArgParser.getResolvedOptions(sysArgs, Seq("JOB_NAME", "dynamodbSuggestionTableName", "dynamodbAnalysisTableName", "glueDatabase", "glueTables", "targetBucketName","pushDownPredicate","mapTablePredicate").toArray)
     Job.init(args("JOB_NAME"), glueContext, args.asJava)
 
     val dynamodbSuggestionTableName = args("dynamodbSuggestionTableName")
     val dynamodbAnalysisTableName = args("dynamodbAnalysisTableName")
     val dbName = args("glueDatabase")
     val tabNames = args("glueTables").split(",").map(_.trim)
+	  val  pushDownPredicate= args("pushDownPredicate")
+    val predicateMap = args("mapTablePredicate").split(",").map(_.trim)
+
+    val mapTablePredicate = (tabNames zip predicateMap).toMap
+
     val getYear = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy"))
     val getMonth = LocalDate.now().format(DateTimeFormatter.ofPattern("MM"))
     val getDay = LocalDate.now().format(DateTimeFormatter.ofPattern("dd"))
@@ -76,11 +82,34 @@ object GlueApp {
     jobConf_add.set("mapred.input.format.class", "org.apache.hadoop.dynamodb.read.DynamoDBInputFormat")
 
     import spark.implicits._
-
+ 
     for (tabName <- tabNames) {
+       var predicate= mapTablePredicate(tabName);
+       
+       //println("tabName:="+tabName + " -> " + "predicate:="+predicate)
 
-      val glueDF = glueContext.getCatalogSource(database = dbName, tableName = tabName, redshiftTmpDir = "", transformationContext = "dataset").getDynamicFrame().toDF()
+       var glueDF: DataFrame = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], StructType(Seq()))
 
+          if("NONE".equals(predicate)){
+         
+                glueDF= glueContext.getCatalogSource(database = dbName, tableName = tabName, redshiftTmpDir = "", transformationContext = "dataset").getDynamicFrame().toDF()
+               // print("#########################################################")
+                //println("glueDF.count()="+tabNames)
+                //println("tabNames="+glueDF.count())
+                //glueDF.show(10)
+                //println("#########################################################")
+          }else{
+ 
+               glueDF=glueContext.getCatalogSource(database = dbName, tableName = tabName, redshiftTmpDir = "", transformationContext = "dataset",pushDownPredicate=predicate).getDynamicFrame().toDF()
+                //print("#########################################################")
+                //println("glueDF.toDF().count()="+tabNames)
+                //println("tabNames="+glueDF.count())
+                //glueDF.show(10)
+                //println("#########################################################")
+                
+          }    
+                
+                
       val suggestionResult = {
         ConstraintSuggestionRunner()
           .onData(glueDF)
