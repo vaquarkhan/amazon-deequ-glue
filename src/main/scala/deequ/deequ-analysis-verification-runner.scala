@@ -88,6 +88,7 @@ object GlueApp {
         "dynamodbAnalysisTableName",
         "glueDatabase",
         "glueTables",
+		    "pushDownPredicate",
         "targetBucketName").toArray)
 
     Job.init(args("JOB_NAME"), glueContext, args.asJava)
@@ -96,6 +97,13 @@ object GlueApp {
     val dynamodbAnalysisTableName = args("dynamodbAnalysisTableName")
     val dbName = args("glueDatabase")
     val tabNames = args("glueTables").split(",").map(_.trim)
+    //val pushDownPredicate = args("pushDownPredicate")
+    val pushDownPredicate =args("pushDownPredicate").split(",").map(_.trim)
+   // print("pushDownPredicate="+pushDownPredicate)
+    //map tables and predicate
+    val mapTablePredicate = tabNames zip pushDownPredicate
+
+
     // Empty dataframes required for successful job compilation
     var suggestionCheckDF: DataFrame = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], StructType(Seq()))
     var analysisCheckDF: DataFrame = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], StructType(Seq()))
@@ -103,7 +111,8 @@ object GlueApp {
     var verificationDataFrame: Seq[DataFrame] = Seq(spark.createDataFrame(spark.sparkContext.emptyRDD[Row], StructType(Seq())))
     var analysisDataFrame: Seq[DataFrame] = Seq(spark.createDataFrame(spark.sparkContext.emptyRDD[Row], StructType(Seq())))
 
-    for (tabName <- tabNames) {
+     for((tabName,predicate) <- mapTablePredicate){
+
       //***********************************************************************//
       // Step2: Extracting suggestions from DynamoDB using input GLUE table
       //***********************************************************************//
@@ -112,8 +121,12 @@ object GlueApp {
       //***********************************************************************//
       // Step3: Create Dataframe from GLUE tables to run the Verification result
       //***********************************************************************//
-      val glueTableDF: DataFrame = readGlueTablesToDF(dbName, tabName)
-
+      //println("tabName :="+tabName + " -> " + "predicate:="+predicate)
+      val glueTableDF: DataFrame = readGlueTablesToDF(dbName, tabName,predicate)
+      //print("##########################################################")
+      //print("count of glueTableDF="+glueTableDF.toDF().count())
+      //glueTableDF.toDF().show()
+      //print("##########################################################")
       //***********************************************************************//
       // Step4: Build validation code dataframe
       //***********************************************************************//
@@ -189,13 +202,22 @@ object GlueApp {
    * @param glueTable
    * @return
    */
-  def readGlueTablesToDF(glueDB: String, glueTable: String): DataFrame = {
+  def readGlueTablesToDF(glueDB: String, glueTable: String,pushDownPredicate:String): DataFrame = {
 
-    glueContext.getCatalogSource(database = glueDB,
-      tableName = glueTable,
-      redshiftTmpDir = "",
-      transformationContext = "datasource0")
-      .getDynamicFrame().toDF()
+    if("NONE".equals(pushDownPredicate)){
+        glueContext.getCatalogSource(database = glueDB,
+            tableName = glueTable,
+            redshiftTmpDir = "",
+            transformationContext = "datasource0" )
+            .getDynamicFrame().toDF()
+    }else{
+        glueContext.getCatalogSource(database = glueDB,
+            tableName = glueTable,
+            redshiftTmpDir = "",
+            transformationContext = "datasource0",
+            pushDownPredicate=pushDownPredicate)
+            .getDynamicFrame().toDF()
+    }
 
   }
 
